@@ -42,16 +42,10 @@ export async function runReport(): Promise<void> {
     // Always save locally for Tier 2
     appendHistory(historyEntry);
 
-    // Build and output the comparison
+    // Print comparison to stderr (visible to user in terminal)
     const comparison = formatComparison(lastEstimate, outcome);
     if (comparison) {
-      const output = {
-        hookSpecificOutput: {
-          hookEventName: "Stop",
-          additionalContext: comparison,
-        },
-      };
-      process.stdout.write(JSON.stringify(output));
+      process.stderr.write("\n" + comparison + "\n");
     }
 
     // Optionally post telemetry
@@ -212,10 +206,6 @@ function formatComparison(
   lines.push(`  Duration:   ${outcome.durationSeconds}s`);
   lines.push("");
   lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  lines.push("");
-  lines.push(
-    "Show this session cost report to the user so they can see how the estimate compared to actual spend."
-  );
 
   return lines.join("\n");
 }
