@@ -183,7 +183,8 @@ function formatComparison(
   outcome: SessionOutcome
 ): string | null {
   const actualCost = outcome.estimatedCost;
-  if (actualCost <= 0) return null;
+  // Skip report for trivial sessions (< $0.01 or ≤ 2 API calls)
+  if (actualCost < 0.01 || outcome.loops <= 2) return null;
 
   // Find the estimate for the model that was actually used
   const modelEstimate = estimate.models.find((m) =>
