@@ -1,73 +1,69 @@
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import {
   loadConfig,
   loadLastEstimate,
-  buildTelemetryPayload,
-  postTelemetry,
 } from "../core/telemetry.js";
-import { appendHistory } from "../core/history-analyzer.js";
-import type { HistoryEntry, HookInput, LastEstimate } from "../types.js";
+import type { LastEstimate } from "../types.js";
 import { MODEL_PRICING } from "../data/pricing.js";
+import { join } from "path";
+import { homedir } from "os";
 
 export async function runReport(): Promise<void> {
   try {
-    // Read hook input from stdin
-    const input = await readStdin();
-    const hookInput = parseHookInput(input);
-
     const lastEstimate = loadLastEstimate();
     if (!lastEstimate) {
-      // No estimate to compare against — nothing to do
+      console.log("  No estimate found. Run a prompt with Tarmac active first.");
       return;
     }
 
-    // Parse transcript for actual outcome
-    const outcome = extractOutcome(hookInput.transcript_path);
-    if (!outcome) return;
+    // Find the transcript for this session
+    const transcriptPath = findTranscript(lastEstimate.sessionId);
+    if (!transcriptPath) {
+      console.log("  Could not find transcript for session: " + lastEstimate.sessionId);
+      return;
+    }
 
-    // Build history entry for Tier 2
-    const historyEntry: HistoryEntry = {
-      timestamp: new Date().toISOString(),
-      taskType: lastEstimate.classification.taskType,
-      promptSnippet: "", // We don't store prompts in report, just classification
-      actualLoops: outcome.loops,
-      actualInputTokens: outcome.totalInputTokens,
-      actualOutputTokens: outcome.totalOutputTokens,
-      actualCost: outcome.estimatedCost,
-      model: outcome.model,
-      initialContext: outcome.initialContext,
-      finalContext: outcome.finalContext,
-    };
+    const outcome = extractOutcome(transcriptPath);
+    if (!outcome) {
+      console.log("  Could not extract outcome from transcript.");
+      return;
+    }
 
-    // Always save locally for Tier 2
-    appendHistory(historyEntry);
-
-    // Output comparison as systemMessage (shown to user by Claude Code)
     const comparison = formatComparison(lastEstimate, outcome);
     if (comparison) {
-      process.stdout.write(JSON.stringify({ systemMessage: comparison }));
-    }
-
-    // Optionally post telemetry
-    const config = loadConfig();
-    if (config.telemetryOptIn) {
-      const payload = buildTelemetryPayload(
-        lastEstimate,
-        outcome.loops,
-        outcome.totalOutputTokens,
-        outcome.initialContext,
-        outcome.finalContext,
-        outcome.durationSeconds,
-        outcome.model
-      );
-      await postTelemetry(payload);
+      console.log(comparison);
+    } else {
+      console.log("  Session too short to report (< $0.01 or ≤ 2 API calls).");
     }
   } catch (err) {
-    // Report should never fail loudly
-    process.stderr.write(
-      `[tarmac] report error: ${err instanceof Error ? err.message : String(err)}\n`
+    console.error(
+      `[tarmac] report error: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+function findTranscript(sessionId: string): string | null {
+  const claudeProjectsDir = join(homedir(), ".claude", "projects");
+  try {
+    for (const dir of readdirSync(claudeProjectsDir)) {
+      const dirPath = join(claudeProjectsDir, dir);
+      try {
+        if (!statSync(dirPath).isDirectory()) continue;
+        const candidate = join(dirPath, sessionId + ".jsonl");
+        try {
+          statSync(candidate);
+          return candidate;
+        } catch {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // projects dir doesn't exist
+  }
+  return null;
 }
 
 interface SessionOutcome {
@@ -82,10 +78,8 @@ interface SessionOutcome {
 }
 
 function extractOutcome(
-  transcriptPath: string | undefined
+  transcriptPath: string
 ): SessionOutcome | null {
-  if (!transcriptPath) return null;
-
   try {
     const content = readFileSync(transcriptPath, "utf-8");
     const lines = content.trim().split("\n").filter(Boolean);
@@ -103,7 +97,6 @@ function extractOutcome(
       try {
         const entry = JSON.parse(line);
 
-        // Track timestamps for duration
         if (entry.timestamp) {
           const ts = new Date(entry.timestamp).getTime();
           if (!firstTimestamp) firstTimestamp = ts;
@@ -132,7 +125,6 @@ function extractOutcome(
 
     if (loops === 0) return null;
 
-    // Calculate approximate cost
     const pricing = MODEL_PRICING.find((p) => model.includes(p.modelId)) ||
       MODEL_PRICING[0];
     const estimatedCost =
@@ -159,34 +151,13 @@ function extractOutcome(
   }
 }
 
-function readStdin(): Promise<string> {
-  return new Promise((resolve) => {
-    let data = "";
-    const timeout = setTimeout(() => resolve(data || "{}"), 5000);
-    process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => {
-      clearTimeout(timeout);
-      resolve(data);
-    });
-    process.stdin.on("error", () => {
-      clearTimeout(timeout);
-      resolve("{}");
-    });
-  });
-}
-
 function formatComparison(
   estimate: LastEstimate,
   outcome: SessionOutcome
 ): string | null {
   const actualCost = outcome.estimatedCost;
-  // Skip report for trivial sessions (< $0.01 or ≤ 2 API calls)
   if (actualCost < 0.01 || outcome.loops <= 2) return null;
 
-  // Find the estimate for the model that was actually used
   const modelEstimate = estimate.models.find((m) =>
     outcome.model.includes(m.modelId)
   ) || estimate.models[0];
@@ -195,18 +166,20 @@ function formatComparison(
     actualCost >= modelEstimate.costLow && actualCost <= modelEstimate.costHigh;
 
   const lines: string[] = [];
-  lines.push("📊 TARMAC SESSION REPORT");
-  lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   lines.push("");
-  lines.push(`  Model:      ${modelEstimate.model}`);
-  lines.push(`  Estimated:  ${fmtDollars(modelEstimate.costLow)} - ${fmtDollars(modelEstimate.costHigh)}`);
-  lines.push(`  Actual:     ${fmtDollars(actualCost)}`);
-  lines.push(`  Result:     ${inRange ? "✅ Within estimate" : "❌ Outside estimate"}`);
+  lines.push("  📊 TARMAC SESSION REPORT");
+  lines.push("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   lines.push("");
-  lines.push(`  API calls:  ${outcome.loops}`);
-  lines.push(`  Duration:   ${outcome.durationSeconds}s`);
+  lines.push(`    Model:      ${modelEstimate.model}`);
+  lines.push(`    Estimated:  ${fmtDollars(modelEstimate.costLow)} - ${fmtDollars(modelEstimate.costHigh)}`);
+  lines.push(`    Actual:     ${fmtDollars(actualCost)}`);
+  lines.push(`    Result:     ${inRange ? "✅ Within estimate" : "❌ Outside estimate"}`);
   lines.push("");
-  lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  lines.push(`    API calls:  ${outcome.loops}`);
+  lines.push(`    Duration:   ${outcome.durationSeconds}s`);
+  lines.push("");
+  lines.push("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  lines.push("");
 
   return lines.join("\n");
 }
@@ -214,17 +187,4 @@ function formatComparison(
 function fmtDollars(amount: number): string {
   if (amount < 0.01) return `$${amount.toFixed(3)}`;
   return `$${amount.toFixed(2)}`;
-}
-
-function parseHookInput(raw: string): HookInput {
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      hook_event_name: parsed.hook_event_name || "Stop",
-      transcript_path: parsed.transcript_path || undefined,
-      session_id: parsed.session_id || undefined,
-    };
-  } catch {
-    return { hook_event_name: "Stop" };
-  }
 }

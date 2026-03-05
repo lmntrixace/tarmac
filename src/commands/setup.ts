@@ -93,6 +93,8 @@ export async function runSetup(): Promise<void> {
   );
   console.log("    4. You decide: proceed, switch model, or cancel");
   console.log("");
+  console.log("  After a session, run 'tarmac-cost report' to compare estimates vs actual spend.");
+  console.log("");
   console.log("  To uninstall: remove the Tarmac entries from ~/.claude/settings.json");
   console.log("");
 }
@@ -132,17 +134,6 @@ function installHooks(): void {
     ],
   };
 
-  const reportHook: HookEntry = {
-    matcher: "",
-    hooks: [
-      {
-        type: "command",
-        command: "tarmac-cost report",
-        timeout: 5000,
-      },
-    ],
-  };
-
   // Add UserPromptSubmit hook (preserve existing)
   const existingPromptHooks = settings.hooks.UserPromptSubmit || [];
   // Check if Tarmac hook already exists
@@ -154,15 +145,12 @@ function installHooks(): void {
   }
   settings.hooks.UserPromptSubmit = existingPromptHooks;
 
-  // Add Stop hook (preserve existing)
-  const existingStopHooks = settings.hooks.Stop || [];
-  const hasTarmacReport = existingStopHooks.some((h) =>
-    h.hooks?.some((hh) => hh.command?.includes("tarmac-cost report"))
-  );
-  if (!hasTarmacReport) {
-    existingStopHooks.push(reportHook);
+  // Remove any existing Tarmac Stop hooks (Stop fires every turn, not just session end)
+  if (settings.hooks.Stop) {
+    settings.hooks.Stop = settings.hooks.Stop.filter(
+      (h) => !h.hooks?.some((hh) => hh.command?.includes("tarmac-cost"))
+    );
   }
-  settings.hooks.Stop = existingStopHooks;
 
   // Write back
   writeFileSync(CLAUDE_SETTINGS_PATH, JSON.stringify(settings, null, 2));
