@@ -142,7 +142,7 @@ tarmac/
 
 ## Limitations
 
-Be honest about what this can't do (yet):
+What tarmac can't do (yet):
 
 - **Short/vague prompts** — A 5-word prompt like "fix the login bug" gives the model very little signal. Estimates will be wide.
 - **No context awareness** — The model sees only the current prompt text, not the conversation history or codebase. A follow-up "do it differently" has no features to work with.
