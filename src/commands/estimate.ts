@@ -18,8 +18,16 @@ export async function runEstimate(): Promise<void> {
       return;
     }
 
-    const config = loadConfig();
     const prompt = hookInput.prompt;
+
+    // Skip estimate for very short prompts (< 5 words) — likely confirmations/follow-ups
+    const wordCount = prompt.trim().split(/\s+/).filter(w => w.length > 0).length;
+    if (wordCount < 5) {
+      writeHookOutput(null);
+      return;
+    }
+
+    const config = loadConfig();
 
     // Step 1: Estimate context from transcript
     const contextEstimate = estimateContext(

@@ -47,7 +47,8 @@ export function formatEstimate(estimate: CostEstimate): string {
   lines.push("");
   lines.push(
     "IMPORTANT INSTRUCTION: You MUST present the cost estimate above to the user BEFORE doing any work. " +
-    "Show the estimate exactly as formatted, then ask the user whether to proceed, switch to a cheaper model, or cancel. " +
+    "Show the estimate exactly as formatted, then ask the user whether to proceed or cancel. " +
+    "If the user wants a cheaper model, tell them to start a new session with: claude --model haiku (or sonnet). " +
     "Do NOT skip this step. Do NOT begin any work until the user explicitly confirms."
   );
 
