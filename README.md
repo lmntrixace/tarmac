@@ -4,6 +4,8 @@
 
 Know what your AI coding task will cost *before* it runs. Tarmac hooks into Claude Code, intercepts your prompt, and shows a calibrated cost range — so you can proceed, switch models, or cancel before spending a cent.
 
+![Tarmac Demo](demo.gif)
+
 ## The Problem
 
 Claude Code has zero cost visibility. You type a prompt, it runs for 2 minutes or 20 minutes, and you find out the cost after it's done. For complex tasks on Opus, that can be $5-20+ per prompt — and there's no way to know in advance.
